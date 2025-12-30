@@ -1,0 +1,115 @@
+import std/[os, strformat, asyncdispatch, json, options]
+import nim_parasut
+
+# Integration Sandbox Test
+# This test expects specific environment variables to be set.
+# It runs against the real Parasut Sandbox API.
+
+proc main() {.async.} =
+  let clientId = getEnv("PARASUT_CLIENT_ID")
+  let clientSecret = getEnv("PARASUT_CLIENT_SECRET")
+  let username = getEnv("PARASUT_USERNAME")
+  let password = getEnv("PARASUT_PASSWORD")
+  let companyId = getEnv("PARASUT_COMPANY_ID")
+
+  if clientId == "":
+    echo "Skipping integration test: Environment variables not set."
+    return
+
+  echo "Starting Integration Test on Sandbox..."
+
+  let client = initParasutClient(clientId, clientSecret, username, password, companyId)
+
+  # Hook for logging
+  client.onLog = proc(msg: string, level: string) =
+    echo &"[{level}] {msg}"
+
+  # 1. Authenticate
+  await client.authenticate()
+  echo "Authenticated!"
+
+  # 2. Create Contact
+  let newContact = ContactInput(
+    `type`: "contacts",
+    attributes: ContactAttributes(
+      name: "Integration Test Customer " & $rand(1000),
+      email: some("integration@test.com"),
+      contact_type: "company",
+      is_abroad: false,
+      account_type: "customer"
+    )
+  )
+  let createdContact = await client.createContact(newContact)
+  echo &"Created Contact ID: {createdContact.id}"
+
+  # 3. List Contacts
+  let contacts = await client.listContacts()
+  echo &"Fetched {contacts.len} contacts."
+
+  # 4. Create Product
+  let newProduct = ProductInput(
+    `type`: "products",
+    attributes: ProductAttributes(
+      name: "Integration Product " & $rand(1000),
+      vat_rate: 18.0,
+      currency: "TRL",
+      list_price: 500.0,
+      unit: "unit",
+      inventory_tracking: false
+    )
+  )
+  let createdProduct = await client.createProduct(newProduct)
+  echo &"Created Product ID: {createdProduct.id}"
+
+  # 5. Create Invoice
+  # For invoice creation we need relationships (contact and product)
+  let invoiceRel = %*{
+    "contact": {
+      "data": { "id": createdContact.id, "type": "contacts" }
+    },
+    "details": {
+      "data": [
+        {
+          "type": "sales_invoice_details",
+          "attributes": {
+            "quantity": 1,
+            "unit_price": 500.0,
+            "vat_rate": 18.0
+          },
+          "relationships": {
+            "product": {
+              "data": { "id": createdProduct.id, "type": "products" }
+            }
+          }
+        }
+      ]
+    }
+  }
+
+  let newInvoice = SalesInvoiceInput(
+    `type`: "sales_invoices",
+    attributes: SalesInvoiceAttributes(
+      item_type: "invoice",
+      issue_date: "2023-10-27", # Should be today dynamically in real code
+      currency: "TRL",
+      exchange_rate: 1.0,
+      total_vat: 90.0,
+      total_gross: 590.0
+    ),
+    relationships: invoiceRel
+  )
+
+  let createdInvoice = await client.createSalesInvoice(newInvoice)
+  echo &"Created Invoice ID: {createdInvoice.id}"
+
+  # 6. Delete/Cleanup
+  await client.deleteContact(createdContact.id)
+  await client.deleteProduct(createdProduct.id)
+  # Invoices often can't be deleted if finalized, but in sandbox maybe cancelled.
+  await client.cancelSalesInvoice(createdInvoice.id)
+
+  echo "Integration Test Completed Successfully."
+
+import std/random
+randomize()
+waitFor main()
