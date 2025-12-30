@@ -1,3 +1,9 @@
 nimcache/
-nimblecache/
-htmldocs/
+*.exe
+*.o
+*.a
+*.so
+*.dll
+*.dylib
+tests/integration_sandbox.nim
+.env
